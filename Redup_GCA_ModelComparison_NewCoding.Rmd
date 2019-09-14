@@ -1,0 +1,659 @@
+---
+title: 'Reduplication study: GCA analysis and model comparisons - New Coding'
+author: "Aitor San Jose, Mits Ota, Kenny Smith"
+date: "13 September 2019"
+output:
+  html_notebook:
+    number_sections: yes
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
+---
+
+
+# Preamble
+These are GCA analyses and model comparisons run for the reduplication study. Originally in raw R script, now in R Notebook format. It saves tables as .doc files and plots as .pdf files. *This one uses the new coding of phonological repeition implemented by Kenny*.
+
+
+# Packages
+```{r}
+library(ggplot2)
+library(broom)
+library(lme4)
+library(bbmle)
+library(lmerTest)
+library(sjPlot)
+```
+
+# Data preparation
+## Data read-in
+This reads in the new dataset that includes the new coding of syllable and consonant repetition. But the script replaces the old equivalents (Adj_B, New_Redup_B) with the new variables (SyllableRepetition, ConsonantRepetition). 
+```{r}
+df = read.table(file="data_june_2018_recoded2.csv", na.strings=c("", "NA"), sep=",", header=TRUE)
+df = subset(df, select = -c(New_Redup_B, Adj_B)) 
+colnames(df)[c(46, 47)] <- c("Adj_B", "New_Redup_B") 
+colnames(df)[6] <- "Unique_language"
+df$Trial_Iteration[is.na(df$Trial_Iteration)] <- 0 #make NAs 0 for next line to work
+df <-subset(df,Trial_Iteration != 1)  # keep seed languages and second round of iterations
+# df <- subset(df, Transmitter == 1) # uncomment to keep only the data from the participants whose language was used to train the following generation
+
+df_director<-subset(df,Stage!='interactM') # includes seed languages
+df_matcher<-subset(df,Stage=='interactM') # includes only generations 1 to 5, since there is no accuracy for seed languages
+df_director_generations_1_to_5 <- subset(df_director, Generation > 0) #excludes seed languages
+```
+
+## Sum-coding
+```{r}
+contrasts(df_director$LexiconType) = contr.sum(2)
+contrasts(df_director$GroupType) = contr.sum(2)
+contrasts(df_matcher$LexiconType) = contr.sum(2)
+contrasts(df_matcher$GroupType) = contr.sum(2)
+```
+
+## Adding 3rd-order polynomials for GCA
+
+```{r}
+df_director$timebin = df_director$Generation + 1
+t = poly(unique(df_director$timebin), 3)
+df_director[,paste("ot", 1:3, sep="")] <- t[df_director$timebin, 1:3]
+
+df_matcher$timebin = df_matcher$Generation
+t = poly(unique(df_matcher$timebin), 3)
+df_matcher[,paste("ot", 1:3, sep="")] <- t[df_matcher$timebin, 1:3]
+```
+
+
+# Analysis of consonant repetition ("CVC")
+
+## CVC: Full models
+```{r}
+# CVC_third_order <- glmer(New_Redup_B ~ #maximal random effect structure, up to cubic term 
+#                 (ot1+ot2+ot3) * GroupType * LexiconType + (1+ot1+ot2+ot3|Unique_Participant) + 
+#                 (1+ot1+ot2+ot3 |Meaning) + (1+ot1+ot2+ot3|Pair), data=df_director, family=binomial, 
+#                 control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+#CVC_second_order <- glmer(New_Redup_B ~ #maximal random effect structure, up to quadratic term 
+#                 (ot1+ot2) * GroupType * LexiconType + (1+ot1+ot2|Unique_Participant) + 
+#                 (1+ot1+ot2 |Meaning) + (1+ot1+ot2|Pair), data=df_director, family=binomial, 
+#                 control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+#CVC_first_order <- glmer(New_Redup_B ~ #maximal random effect structure, up to linear term 
+#                 ot1 * GroupType * LexiconType + (1+ot1|Unique_Participant) + (1+ot1 |Meaning) + 
+#                 (1+ot1+ot2|Pair), data=df_director, family=binomial, 
+#                 control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))    
+```
+
+## CVC: Reduced models              
+The full models above all result in singular fit. The models converge without singular fit when all the random slopes are removed and 'Pair' is also removed as a random effect.Below are models with these terms dropped.
+```{r}
+CVC_third_order <- glmer(New_Redup_B ~ #maximal random effect structure, up to cubic term 
+                  (ot1+ot2+ot3) * GroupType * LexiconType + (1|Unique_Participant) + (1|Meaning),
+                  data=df_director, family=binomial, 
+                  control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+CVC_second_order <- glmer(New_Redup_B ~ #maximal random effect structure, up to quadratic term 
+                    (ot1+ot2) * GroupType * LexiconType + (1|Unique_Participant) + (1|Meaning),
+                   data=df_director, family=binomial, 
+                   control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+CVC_first_order <- glmer(New_Redup_B ~ #maximal random effect structure, up to linear term                          
+                    ot1 * GroupType * LexiconType + (1|Unique_Participant) + (1|Meaning),
+                    data=df_director, family=binomial, 
+                    control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+summary(CVC_third_order)
+summary(CVC_second_order)
+summary(CVC_first_order)
+```
+
+## CVC: Model comparison
+```{r}
+CVC_model.names <- c("CVC first order","CVC second order","CVC third order")
+CVC_summ.table <- do.call(rbind, lapply(list(CVC_first_order,CVC_second_order,CVC_third_order), broom::glance))
+CVC_table.cols <- c("df.residual", "deviance", "AIC")
+CVC_reported.table <- CVC_summ.table[CVC_table.cols]
+names(CVC_reported.table) <- c("Resid.Df", "Resid.Dev", "AIC")
+CVC_reported.table[['dAIC']] <-  with(CVC_reported.table, AIC - min(AIC))
+CVC_reported.table[['AIC_weight']] <- with(CVC_reported.table, exp(- 0.5 * dAIC) / sum(exp(- 0.5 * dAIC)))
+CVC_reported.table$AIC <- NULL
+CVC_reported.table$AIC_weight <- round(CVC_reported.table$AIC_weight, 2)
+CVC_reported.table$dAIC <- round(CVC_reported.table$dAIC, 1)
+CVC_reported.table$Resid.Dev <- round(CVC_reported.table$Resid.Dev, 2)
+row.names(CVC_reported.table) <- CVC_model.names
+View(CVC_reported.table)
+sjPlot::tab_df(CVC_reported.table,
+       file="model comparison CVC.doc")
+```
+
+## CVC: Plots showing model fit of 1st and 2nd order models by group type
+```{r}
+ggplot(df_director, aes(Generation, New_Redup_B, shape=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(CVC_first_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Consonant repetition")+ 
+  ggtitle('Consonant repetition by group type - first order model')
+dev.print(pdf, 'Consonant repetition by group type - first order model.pdf')
+
+ggplot(df_director, aes(Generation, New_Redup_B, color=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(CVC_second_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("CVC repetition")+ 
+  ggtitle('CVC repetition by group type - second order model')
+dev.print(pdf,'CVC repetition by group type - second order model.pdf')
+
+# sjPlot::tab_df(round(coef(summary(CVC_first_order)),3),file='CVC_fixed_effects.doc')
+# sjPlot::tab_df(as.numeric(VarCorr(CVC_first_order)),file='CVC_random_effects.doc')
+```
+
+## CVC: Plots showing model fit of 1st and 2nd order models by lexicon type
+```{r}
+ggplot(df_director, aes(Generation, New_Redup_B, color=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(CVC_first_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("CVC repetition") + 
+  ggtitle('CVC repetition by lexicon type - first order model')
+dev.print(pdf,'CVC repetition by lexicon type - first order model.pdf')
+
+
+ggplot(df_director, aes(Generation, New_Redup_B, color=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(CVC_second_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("CVC repetition") + 
+  ggtitle('CVC repetition by lexicon type - second order model')
+dev.print(pdf,'CVC repetition by lexicon type - second order model.pdf')
+```
+
+# Analysis of adjacent syllable repetition
+
+## Syllable repetition: Full models
+```{r}
+# ADJ_third_order <- glmer(Adj_B ~ #maximal random effect structure, up to cubic term 
+#                   (ot1+ot2+ot3) * GroupType * LexiconType + (1+ot1+ot2+ot3|Unique_Participant) + 
+#                   (1+ot1+ot2+ot3 |Meaning) + (1+ot1+ot2+ot3|Pair), data=df_director, family=binomial, 
+#                   control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+# ADJ_second_order <- glmer(Adj_B ~ #maximal random effect structure, up to quadratic term 
+#                   (ot1+ot2) * GroupType * LexiconType + (1+ot1+ot2|Unique_Participant) + 
+#                   (1+ot1+ot2 |Meaning) + (1+ot1+ot2|Pair),
+#                   data=df_director, family=binomial, 
+#                   control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+# ADJ_first_order <- glmer(Adj_B ~ #maximal random effect structure, up to linear term 
+#                   ot1 * GroupType * LexiconType + (1+ot1|Unique_Participant) + 
+#                   (1+ot1 |Meaning) + (1+ot1|Pair), data=df_director, family=binomial, 
+#                   control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+```
+
+## Syllable repetition: Reduced models
+The full models above also result in singular fit. So they are reduced below.
+```{r}
+ADJ_third_order <- glmer(Adj_B ~ #maximal random effect structure, up to cubic term 
+                         (ot1+ot2+ot3) * GroupType * LexiconType + (1|Unique_Participant) + 
+                           (1|Meaning), data=df_director, family=binomial, 
+                         control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+ADJ_second_order <- glmer(Adj_B ~ #maximal random effect structure, up to quadratic term 
+                      (ot1+ot2) * GroupType * LexiconType + (1|Unique_Participant) + 
+                        (1|Meaning), data=df_director, family=binomial, 
+                      control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+ADJ_first_order <- glmer(Adj_B ~ #maximal random effect structure, up to linear term 
+                        ot1 * GroupType * LexiconType + (1|Unique_Participant) + 
+                          (1|Meaning), data=df_director, family=binomial, 
+                        control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+summary(ADJ_third_order)
+summary(ADJ_second_order)
+summary(ADJ_first_order)
+```
+
+
+## Syllable repetition: Model comparison
+```{r}
+ADJ_model.names <- c("ADJ first order","ADJ second order","ADJ third order")
+ADJ_summ.table <- do.call(rbind, lapply(list(ADJ_first_order,ADJ_second_order,ADJ_third_order), broom::glance))
+ADJ_table.cols <- c("df.residual", "deviance", "AIC")
+ADJ_reported.table <- ADJ_summ.table[ADJ_table.cols]
+names(ADJ_reported.table) <- c("Resid.Df", "Resid.Dev", "AIC")
+ADJ_reported.table[['dAIC']] <-  with(ADJ_reported.table, AIC - min(AIC))
+ADJ_reported.table[['AIC_weight']] <- with(ADJ_reported.table, exp(- 0.5 * dAIC) / sum(exp(- 0.5 * dAIC)))
+ADJ_reported.table$AIC <- NULL
+ADJ_reported.table$AIC_weight <- round(ADJ_reported.table$AIC_weight, 2)
+ADJ_reported.table$dAIC <- round(ADJ_reported.table$dAIC, 1)
+ADJ_reported.table$Resid.Dev <- round(ADJ_reported.table$Resid.Dev, 2)
+
+row.names(ADJ_reported.table) <- ADJ_model.names
+View(ADJ_reported.table)
+
+sjPlot::tab_df(ADJ_reported.table,
+               file="model comparison _ADJ.doc")
+
+sjPlot::tab_df(round(coef(summary(ADJ_first_order)),3),file='ADJ_fixed_effects.doc')
+```
+
+
+## Syllable repetition: Plots showing model fit of 1st and 2nd order models by group type
+```{r}
+df_director_adj_plots <- subset(df_director, !(is.na(df_director$Adj_B)))
+
+  
+ggplot(df_director_adj_plots, aes(Generation, Adj_B, shape=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ADJ_first_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Adjacent repetition")+ 
+  ggtitle('Adjacent repetition by group type - first order model')
+dev.print(pdf,'Adjacent repetition by group type - first order model.pdf')
+
+ggplot(df_director_adj_plots, aes(Generation, Adj_B, color=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ADJ_second_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Adjacent Repetition") +
+  ggtitle('Adjacent repetition by group type - second order model')
+dev.print(pdf,'Adjacent repetition by group type - second order model.pdf')
+```
+
+## Syllable repetition: Plots showing model fit of 1st and 2nd order models by lexicon type
+```{r}
+ggplot(df_director_adj_plots, aes(Generation, Adj_B, color=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ADJ_first_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Adjacent repetition")+ 
+  ggtitle('Adjacent repetition by lexicon type - first order model')
+dev.print(pdf,'Adjacent repetition by lexicon type - first order model.pdf')
+
+
+ggplot(df_director_adj_plots, aes(Generation, Adj_B, color=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ADJ_second_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Adjacent repetition")+ 
+  ggtitle('Adjacent repetition by lexicon type - second order model')
+dev.print(pdf,'Adjacent repetition by lexicon type - second order model.pdf')
+```
+
+# Accuracy
+
+## Accuracy: Full models
+```{r}
+#ACC_first_order <- glmer(Score ~ #maximal random effect structure, up to linear term 
+#                        ot1 * GroupType * LexiconType  + (1+ot1|Unique_Participant) + 
+#                       (1+ot1 |Meaning) + (1+ot1|Pair), data=df_matcher, family=binomial, 
+#                       control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+#ACC_second_order <- glmer(Score ~ #maximal random effect structure, up to quadratic term 
+#                     (ot1+ot2) * GroupType * LexiconType + (1+ot1+ot2|Unique_Participant) + 
+#                     (1+ot1+ot2 |Meaning) + (1+ot1+ot2|Pair), data=df_matcher, family=binomial, 
+#                     control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+#ACC_third_order <- glmer(Score ~ #maximal random effect structure, up to cubic term 
+#                     (ot1+ot2+ot3) * GroupType * LexiconType + (1+ot1+ot2+ot3|Unique_Participant) + 
+#                   (1+ot1+ot2+ot3 |Meaning) + (1+ot1+ot2+ot3|Pair), data=df_matcher, family=binomial, 
+#                   control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+```
+
+## Accuracy: Reduced models
+The full models above also result in singular fit. So they are reduced below.
+```{r}
+ACC_first_order <- glmer(Score ~ #maximal random effect structure, up to linear term 
+                         ot1 * GroupType * LexiconType + (1|Unique_Participant) + (1|Meaning),
+                       data=df_matcher, family=binomial, 
+                       control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+ACC_second_order <- glmer(Score ~ #maximal random effect structure, up to quadratic term 
+                      (ot1+ot2) * GroupType * LexiconType + (1|Unique_Participant) + (1|Meaning),
+                    data=df_matcher, family=binomial, 
+                    control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+ACC_third_order <- glmer(Score ~ #maximal random effect structure, up to cubic term 
+                      (ot1+ot2+ot3) * GroupType * LexiconType + (1|Unique_Participant) + (1|Meaning),
+                    data=df_matcher, family=binomial, 
+                    control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+summary(ACC_third_order)
+summary(ACC_second_order)
+summary(ACC_first_order)
+```
+
+
+## Accuracy: Model comparison
+```{r}
+ACC_model.names <- c("ACC first order","ACC second order","ACC third order")
+ACC_summ.table <- do.call(rbind, lapply(list(ACC_first_order,ACC_second_order,ACC_third_order), broom::glance))
+ACC_table.cols <- c("df.residual", "deviance", "AIC")
+ACC_reported.table <- ACC_summ.table[ACC_table.cols]
+names(ACC_reported.table) <- c("Resid.Df", "Resid.Dev", "AIC")
+ACC_reported.table[['dAIC']] <-  with(ACC_reported.table, AIC - min(AIC))
+ACC_reported.table[['AIC_weight']] <- with(ACC_reported.table, exp(- 0.5 * dAIC) / sum(exp(- 0.5 * dAIC)))
+ACC_reported.table$AIC <- NULL
+ACC_reported.table$dAIC <- round(ACC_reported.table$dAIC, 1)
+ACC_reported.table$AIC_weight <- round(ACC_reported.table$AIC_weight, 2)
+ACC_reported.table$Resid.Dev <- round(ACC_reported.table$Resid.Dev, 2)
+row.names(ACC_reported.table) <- ACC_model.names
+View(ACC_reported.table)
+sjPlot::tab_df(ACC_reported.table,
+               file="model comparison _ACC.doc")
+```
+
+
+## Accuracy: Plots showing model fit of 1st and 2nd order models by group type
+```{r}
+ggplot(df_matcher, aes(Generation, Score, shape=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ACC_first_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Accuracy")+ 
+  ggtitle('Accuracy by group type - first order model')
+dev.print(pdf,'Accuracy by group type - first order model.pdf')
+
+ggplot(df_matcher, aes(Generation, Score, color=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ACC_second_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Accuracy")+ 
+  ggtitle('Accuracy by group type - second order model')
+dev.print(pdf,'Accuracy by group type - second order model.pdf')
+
+```
+
+
+## Accuracy: Plots showing model fit of 1st and 2nd order models by lexicon type
+```{r}
+ggplot(df_matcher, aes(Generation, Score, shape=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ACC_first_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Accuracy")+ 
+  ggtitle('Accuracy by lexicon type - first order model')
+dev.print(pdf,'Accuracy by lexicon type - first order model.pdf')
+
+ggplot(df_matcher, aes(Generation, Score, shape=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(ACC_second_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Accuracy")+ 
+  ggtitle('Accuracy by lexicon type - second order model')
+dev.print(pdf,'Accuracy by lexicon type - second order model.pdf')
+
+sjPlot::tab_df(round(coef(summary(ACC_first_order)),3),file='ACC_fixed_effects.doc')
+```
+
+# Homonymy
+
+## Coding homonymy
+These are based on iteration 2 only. Homonymy is calculated as proportions.
+```{r}
+df_homonymy<-setNames(aggregate(df_director_generations_1_to_5$New_Redup_B, by=list(df_director_generations_1_to_5$GroupType,df_director_generations_1_to_5$LexiconType,df_director_generations_1_to_5$GroupNumber,df_director_generations_1_to_5$Generation,df_director_generations_1_to_5$Unique_language,df_director_generations_1_to_5$Pair, df_director_generations_1_to_5$Unique_Participant), FUN=mean),c('GroupType','LexiconType','GroupNumber','Generation','Unique_language','Pair', 'Unique_Participant','New_Redup_B_mean'))
+df_homonymy$Word_repetition<-NA
+
+for(i in unique(df_homonymy$Unique_language)){
+  subs_ <- subset(df_director_generations_1_to_5,Unique_language==i)
+  for(j in 1:nrow(df_homonymy)){
+    if(toString(df_homonymy[j,]$Unique_language) == i){
+      df_homonymy[j,]$Word_repetition <- (length(subs_$TypedLabel)-length(unique(subs_$TypedLabel)))/length(subs_$TypedLabel)
+      
+    }
+  }
+}
+
+initial_languages<-subset(df_director,Generation==0)
+df_initial_languages <-setNames(aggregate(initial_languages$New_Redup_B, by=list(initial_languages$GroupType,initial_languages$LexiconType,initial_languages$GroupNumber,initial_languages$Generation,initial_languages$Unique_language,initial_languages$Pair, initial_languages$Unique_Participant), FUN=mean),c('GroupType','LexiconType','GroupNumber','Generation','Unique_language','Pair', 'Unique_Participant','New_Redup_B_mean'))
+df_initial_languages$Word_repetition <-0
+df_homonymy<-rbind(df_initial_languages,df_homonymy)
+
+df_homonymy_1_to_5 <- subset(df_homonymy, Generation>0) #generations 1 to 5
+cor(df_homonymy_1_to_5$New_Redup_B_mean,df_homonymy_1_to_5$Word_repetition) #looking at mean CVC redup. When looking at sum CVC redup the correlation was .20...
+
+df_homonymy$timebin = df_homonymy$Generation + 1
+t_ = poly(unique(df_homonymy$timebin), 3)
+df_homonymy[,paste("ot", 1:3, sep="")] <- t_[df_homonymy$timebin, 1:3]
+
+contrasts(df_homonymy$LexiconType) = contr.sum(2)
+contrasts(df_homonymy$GroupType) = contr.sum(2)
+```
+
+## Homonymy: Models
+Can't fit a 3rd order model because there are fewer observations than random effects
+```{r}
+homonymy_first_order <- lmer(Word_repetition ~
+                          ot1*GroupType*LexiconType +
+                          (1|Unique_Participant),
+                        data=df_homonymy, control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=2e5)))
+
+
+homonymy_second_order <- lmer(Word_repetition ~
+                          (ot1+ot2)*GroupType*LexiconType +
+                            (1|Unique_Participant),
+                        data=df_homonymy, control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=2e5)))
+summary(homonymy_first_order)
+summary(homonymy_second_order)
+```
+
+## Homonymy: Model comparison
+```{r}
+homonyms_model.names <- c("Homonymy first order","Homonymy second order")
+homonyms_summ.table <- do.call(rbind, lapply(list(homonymy_first_order,homonymy_second_order), broom::glance))
+homonyms_table.cols <- c("df.residual", "deviance", "AIC")
+homonyms_reported.table <- homonyms_summ.table[homonyms_table.cols]
+names(homonyms_reported.table) <- c("Resid. Df", "Resid.Dev", "AIC")
+homonyms_reported.table[['dAIC']] <-  with(homonyms_reported.table, AIC - min(AIC))
+homonyms_reported.table[['AIC_weight']] <- with(homonyms_reported.table, exp(- 0.5 * dAIC) / sum(exp(- 0.5 * dAIC)))
+homonyms_reported.table$AIC <- NULL
+homonyms_reported.table$AIC_weight <- round(homonyms_reported.table$AIC_weight, 2)
+homonyms_reported.table$dAIC <- round(homonyms_reported.table$dAIC, 1)
+homonyms_reported.table$Resid.Dev <- round(homonyms_reported.table$Resid.Dev, 2)
+row.names(homonyms_reported.table) <- homonyms_model.names
+View(homonyms_reported.table)
+anova(homonymy_first_order,homonymy_second_order)
+sjPlot::tab_df(homonyms_reported.table,
+               file="model comparison homonyms_.doc")
+
+sjPlot::tab_df(round(coef(summary(homonymy_first_order)),3),file='homonyms_fixed_effects.doc')
+```
+
+
+## Homonymy: Plots showing model fit of 1st and 2nd order models by group type
+```{r}
+ggplot(df_homonymy, aes(Generation, Word_repetition, shape=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_first_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy") 
+dev.print(pdf,'Homonymy by group type - first order model.pdf')
+
+ggplot(df_homonymy, aes(Generation, Word_repetition, color=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_second_order), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy") 
+dev.print(pdf,'Homonymy by group type - second order model.pdf')
+```
+
+
+## Homonymy: Plots showing model fit of 1st and 2nd order models by lexicon type
+```{r}
+ggplot(df_homonymy, aes(Generation, Word_repetition, shape=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_first_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy")
+dev.print(pdf,'Homonymy by lexicon type - first order model.pdf')
+
+ggplot(df_homonymy, aes(Generation, Word_repetition, color=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_second_order), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy") 
+dev.print(pdf,'Homonymy by lexicon type - second order model.pdf')
+```
+
+# Homonymy: Logistic analysis
+
+Analyze homonymy again, using 0/1 coding for word repetition and binomial stats
+
+## Homonymy (log): Models
+```{r}
+df_homonymy$Word_repetition_binary = ifelse(df_homonymy$Word_repetition > 0, 1, 0)
+
+homonymy_first_order_log <- glmer(Word_repetition_binary ~
+                               ot1*GroupType*LexiconType + (1|Unique_Participant),
+                             data=df_homonymy, family=binomial, 
+                             control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+homonymy_second_order_log <- glmer(Word_repetition_binary ~
+                                    (ot1+ot2)*GroupType*LexiconType + (1|Unique_Participant),
+                                  data=df_homonymy, family=binomial, 
+                                  control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+homonymy_third_order_log <- glmer(Word_repetition_binary ~
+                                     (ot1+ot2+ot3)*GroupType*LexiconType + (1|Unique_Participant),
+                                   data=df_homonymy, family=binomial, 
+                                  control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+summary(homonymy_first_order_log)
+summary(homonymy_second_order_log)
+summary(homonymy_third_order_log)
+```
+```{r}
+numcols <- grep("^c\\.",names(df_homonymy))
+dfs_homonymy <- df_homonymy
+dfs_homonymy[,numcols] <- scale(dfs_homonymy[,numcols])
+homonymy_first_order_log_sc <- update(homonymy_first_order_log, data=dfs_homonymy)
+homonymy_second_order_log_sc <- update(homonymy_second_order_log, data=dfs_homonymy)
+
+```
+
+
+## Homonymy (log): Model comparison
+Model comparison shows that the second-order model has the best fit.
+```{r}
+homonyms_log_model.names <- c("Homonymy first order log","Homonymy second order log", "Homonymy third order log")
+homonyms_log_summ.table <- do.call(rbind, lapply(list(homonymy_first_order_log,homonymy_second_order, homonymy_third_order_log), broom::glance))
+homonyms_log_table.cols <- c("df.residual", "deviance", "AIC")
+homonyms_log_reported.table <- homonyms_log_summ.table[homonyms_log_table.cols]
+names(homonyms_log_reported.table) <- c("Resid. Df", "Resid.Dev", "AIC")
+homonyms_log_reported.table[['dAIC']] <-  with(homonyms_log_reported.table, AIC - min(AIC))
+homonyms_log_reported.table[['AIC_weight']] <- with(homonyms_log_reported.table, exp(- 0.5 * dAIC) / sum(exp(- 0.5 * dAIC)))
+homonyms_log_reported.table$AIC <- NULL
+homonyms_log_reported.table$AIC_weight <- round(homonyms_log_reported.table$AIC_weight, 2)
+homonyms_log_reported.table$dAIC <- round(homonyms_log_reported.table$dAIC, 1)
+homonyms_log_reported.table$Resid.Dev <- round(homonyms_log_reported.table$Resid.Dev, 2)
+row.names(homonyms_log_reported.table) <- homonyms_log_model.names
+View(homonyms_log_reported.table)
+anova(homonymy_first_order_log,homonymy_second_order_log, homonymy_third_order_log)
+sjPlot::tab_df(homonyms_log_reported.table,
+               file="model comparison homonyms log_.doc")
+
+sjPlot::tab_df(round(coef(summary(homonymy_first_order_log)),3),file='homonyms_log_fixed_effects.doc')
+homonyms_log_reported.table
+
+```
+
+## Homonymy (log): Plot showing model fit of 2nd order models by group type x lexicon size
+
+```{r}
+ggplot(df_homonymy, aes(Generation, Word_repetition_binary, shape=GroupType, linetype=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_second_order_log), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy")
+dev.print(pdf,'Homonymy Log by Group and Lexicon type - first order model.pdf')
+```
+
+# Homonymy (Gen1-5)
+Because there's discontinuity between Generation/Round 0 and 1, redo the analysis in 'Homonymy' without Generation/Round 0 (i.e., only Generations 1-5).
+
+## Homonymy (Gen1-5): Models
+Can't fit a 3rd order model because there are fewer observations than random effects
+```{r}
+
+homonymy_first_order_1to5 <- lmer(Word_repetition ~
+                               ot1*GroupType*LexiconType + (1|Unique_Participant),
+                             data=df_homonymy[df_homonymy$Generation != 0, ], 
+                             control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+
+
+homonymy_second_order_1to5 <- lmer(Word_repetition ~
+                                (ot1+ot2)*GroupType*LexiconType + (1|Unique_Participant),
+                              data=df_homonymy[df_homonymy$Generation != 0, ], 
+                              control=lmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=1e5)))
+summary(homonymy_first_order_1to5)
+summary(homonymy_second_order_1to5)
+```
+
+## Homonymy (Gen1-5): Model comparison
+```{r}
+homonyms_1to5_model.names <- c("Homonymy first order 1 to 5","Homonymy second order 1 to 5")
+homonyms_1to5_summ.table <- do.call(rbind, lapply(list(homonymy_first_order_1to5,homonymy_second_order_1to5), broom::glance))
+homonyms_1to5_table.cols <- c("df.residual", "deviance", "AIC")
+homonyms_1to5_reported.table <- homonyms_1to5_summ.table[homonyms_1to5_table.cols]
+names(homonyms_1to5_reported.table) <- c("Resid. Df", "Resid.Dev", "AIC")
+homonyms_1to5_reported.table[['dAIC']] <-  with(homonyms_1to5_reported.table, AIC - min(AIC))
+homonyms_1to5_reported.table[['AIC_weight']] <- with(homonyms_1to5_reported.table, exp(- 0.5 * dAIC) / sum(exp(- 0.5 * dAIC)))
+homonyms_1to5_reported.table$AIC <- NULL
+homonyms_1to5_reported.table$AIC_weight <- round(homonyms_1to5_reported.table$AIC_weight, 2)
+homonyms_1to5_reported.table$dAIC <- round(homonyms_1to5_reported.table$dAIC, 1)
+homonyms_1to5_reported.table$Resid.Dev <- round(homonyms_1to5_reported.table$Resid.Dev, 2)
+row.names(homonyms_1to5_reported.table) <- homonyms_1to5_model.names
+View(homonyms_1to5_reported.table)
+anova(homonymy_first_order_1to5,homonymy_second_order_1to5)
+sjPlot::tab_df(homonyms_reported.table,
+               file="model comparison homonyms_1to5_.doc")
+
+sjPlot::tab_df(round(coef(summary(homonymy_first_order_1to5)),3),file='homonyms_1to5_fixed_effects.doc')
+```
+
+
+## Homonymy (Gen1-5): Plots of model fit
+```{r}
+ggplot(df_homonymy[df_homonymy$Generation != 0, ], aes(Generation, Word_repetition, shape=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_first_order_1to5), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy") 
+dev.print(pdf,'Homonymy 1to5 by group type - first order model.pdf')
+
+ggplot(df_homonymy[df_homonymy$Generation != 0, ], aes(Generation, Word_repetition, color=GroupType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_second_order_1to5), linetype=GroupType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy") 
+dev.print(pdf,'Homonymy 1to5  by group type - second order model.pdf')
+
+ggplot(df_homonymy[df_homonymy$Generation != 0, ], aes(Generation, Word_repetition, shape=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_first_order_1to5), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy")
+dev.print(pdf,'Homonymy 1to5 by lexicon type - first order model.pdf')
+
+ggplot(df_homonymy[df_homonymy$Generation != 0, ], aes(Generation, Word_repetition, color=LexiconType)) +
+  stat_summary(fun.data=mean_se, geom="pointrange") +
+  stat_summary(aes(y=fitted(homonymy_second_order_1to5), linetype=LexiconType),
+               fun.y=mean, geom="line") +
+  ylab("Proportion of homonymy") 
+dev.print(pdf,'Homonymy 1to5  by lexicon type - second order model.pdf')
+```
+
+# Consonant repetition (in unique words only)
+in progress
+
+```{r}
+# uniq <- unique(unlist(data$Date))
+# for (i in 1:length(uniq)){
+#    data_1 <- subset(data, date == uniq[i])
+#    #your desired function
+# }
+```
+
+
